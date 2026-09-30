@@ -22,11 +22,12 @@ spec:
       project: default
       sources:
       - repoURL: https://grafana.github.io/helm-charts
+        chart: alloy
         targetRevision: 1.13.0
         helm:
           releaseName: alloy
           valueFiles:
-          - $values/grafana-alloy/{{.metadata.labels.environment}}/values/*-values.yaml
+          - $values/grafana-alloy/{{.metadata.labels.environment}}/values/*.yaml
           valuesObject:
             extraEnv:
               - name: NODE_NAME
@@ -44,7 +45,7 @@ spec:
         ref: values
       - repoURL: https://github.com/eingram-homelab/argocd-core-apps.git
         targetRevision: main
-        path: grafana-alloy/{{.metadata.labels.environemt}}/manifests
+        path: grafana-alloy/{{.metadata.labels.environment}}/manifests
       destination:
         server: '{{.server}}'
         namespace: alloy
