@@ -94,7 +94,7 @@ alloy:
       fieldRef:
         fieldPath: spec.nodeName
   - name: CLUSTER_NAME
-    value: '{{.name}}'
+    value: ycd-rke2
   - name: PROMETHEUS_REMOTE_WRITE_URL
     value: http://prom.local.lan:9090
   - name: LOKI_URL
