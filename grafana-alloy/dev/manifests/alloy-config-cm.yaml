@@ -3,7 +3,7 @@ kind: ConfigMap
 metadata:
   name: alloy-config-cm
 data:
-  alloy.river: |
+  data: |
     // =============================================================================
     // Grafana Alloy - DaemonSet config for RKE2
     // Metrics -> Prometheus remote_write   Logs -> Loki
