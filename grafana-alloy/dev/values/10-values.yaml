@@ -96,9 +96,9 @@ alloy:
   - name: CLUSTER_NAME
     value: ycd-rke2
   - name: PROMETHEUS_REMOTE_WRITE_URL
-    value: http://prom.local.lan:9090
+    value: http://prom.local.lan:9090/api/v1/write
   - name: LOKI_URL
-    value: http://loki.local.lan:3100
+    value: http://loki.local.lan:3100/api/v1/push
 
   # -- Maps all the keys on a ConfigMap or Secret as environment variables. https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.24/#envfromsource-v1-core
   envFrom: []
