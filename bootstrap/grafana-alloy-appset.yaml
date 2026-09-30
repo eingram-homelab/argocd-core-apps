@@ -27,19 +27,21 @@ spec:
         helm:
           releaseName: alloy
           valueFiles:
-          - $values/grafana-alloy/{{.metadata.labels.environment}}/values/*.yaml
+          - $values/grafana-alloy/{{.metadata.labels.environment}}/values/00-values.yaml
+          - $values/grafana-alloy/{{.metadata.labels.environment}}/values/10-values.yaml
           valuesObject:
-            extraEnv:
-              - name: NODE_NAME
-                valueFrom:
-                  fieldRef:
-                    fieldPath: spec.nodeName
-              - name: CLUSTER_NAME
-                value: '{{.name}}'
-              - name: PROMETHEUS_REMOTE_WRITE_URL
-                value: http://prom.local.lan:9090
-              - name: LOKI_URL
-                value: http://loki.local.lan:3100
+            alloy:
+              extraEnv:
+                - name: NODE_NAME
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: spec.nodeName
+                - name: CLUSTER_NAME
+                  value: '{{.name}}'
+                - name: PROMETHEUS_REMOTE_WRITE_URL
+                  value: http://prom.local.lan:9090
+                - name: LOKI_URL
+                  value: http://loki.local.lan:3100
       - repoURL: https://github.com/eingram-homelab/argocd-core-apps.git
         targetRevision: main
         ref: values

@@ -88,7 +88,17 @@ alloy:
   enableReporting: true
 
   # -- Extra environment variables to pass to the Alloy container.
-  extraEnv: []
+  extraEnv:
+  - name: NODE_NAME
+    valueFrom:
+      fieldRef:
+        fieldPath: spec.nodeName
+  - name: CLUSTER_NAME
+    value: '{{.name}}'
+  - name: PROMETHEUS_REMOTE_WRITE_URL
+    value: http://prom.local.lan:9090
+  - name: LOKI_URL
+    value: http://loki.local.lan:3100
 
   # -- Maps all the keys on a ConfigMap or Secret as environment variables. https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.24/#envfromsource-v1-core
   envFrom: []
