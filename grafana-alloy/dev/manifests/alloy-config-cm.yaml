@@ -1,0 +1,308 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alloy-config-cm
+data: |
+  // =============================================================================
+  // Grafana Alloy - DaemonSet config for RKE2
+  // Metrics -> Prometheus remote_write   Logs -> Loki
+  //
+  // Required env vars on the DaemonSet container:
+  //   NODE_NAME                      (downward API: spec.nodeName)
+  //   CLUSTER_NAME                   e.g. "rke2-prod-01"
+  //   PROMETHEUS_REMOTE_WRITE_URL    e.g. https://prometheus.example.com/api/v1/write
+  //   LOKI_URL                       e.g. https://loki.example.com/loki/api/v1/push
+  // Optional (only if you enable the auth blocks below):
+  //   PROM_USER / PROM_PASSWORD / LOKI_USER / LOKI_PASSWORD / LOKI_TENANT_ID
+  //
+  // Required host mounts (read-only): /var/log/pods
+  // =============================================================================
+
+  logging {
+    level  = "info"
+    format = "logfmt"
+  }
+
+  // -----------------------------------------------------------------------------
+  // Remote write destinations
+  // -----------------------------------------------------------------------------
+  prometheus.remote_write "default" {
+    endpoint {
+      url = sys.env("PROMETHEUS_REMOTE_WRITE_URL")
+
+      // basic_auth {
+      //   username = sys.env("PROM_USER")
+      //   password = sys.env("PROM_PASSWORD")
+      // }
+
+      // tls_config {
+      //   ca_file = "/etc/alloy/certs/ca.crt"
+      // }
+
+      queue_config {
+        capacity             = 10000
+        max_shards           = 10
+        max_samples_per_send = 2000
+        batch_send_deadline  = "5s"
+      }
+    }
+
+    external_labels = {
+      cluster = sys.env("CLUSTER_NAME"),
+    }
+  }
+
+  loki.write "default" {
+    endpoint {
+      url = sys.env("LOKI_URL")
+
+      // tenant_id = sys.env("LOKI_TENANT_ID")
+
+      // basic_auth {
+      //   username = sys.env("LOKI_USER")
+      //   password = sys.env("LOKI_PASSWORD")
+      // }
+
+      // tls_config {
+      //   ca_file = "/etc/alloy/certs/ca.crt"
+      // }
+    }
+
+    external_labels = {
+      cluster = sys.env("CLUSTER_NAME"),
+    }
+  }
+
+  // -----------------------------------------------------------------------------
+  // Discovery (node-local only, so each DaemonSet pod handles its own node)
+  // -----------------------------------------------------------------------------
+  discovery.kubernetes "pods" {
+    role = "pod"
+
+    selectors {
+      role  = "pod"
+      field = "spec.nodeName=" + sys.env("NODE_NAME")
+    }
+  }
+
+  discovery.kubernetes "node" {
+    role = "node"
+
+    selectors {
+      role  = "node"
+      field = "metadata.name=" + sys.env("NODE_NAME")
+    }
+  }
+
+  // =============================================================================
+  // METRICS
+  // =============================================================================
+
+  // ---- Alloy self-metrics -----------------------------------------------------
+  prometheus.exporter.self "alloy" {}
+
+  discovery.relabel "alloy_self" {
+    targets = prometheus.exporter.self.alloy.targets
+
+    rule {
+      target_label = "node"
+      replacement  = sys.env("NODE_NAME")
+    }
+  }
+
+  prometheus.scrape "alloy" {
+    targets    = discovery.relabel.alloy_self.output
+    forward_to = [prometheus.remote_write.default.receiver]
+    job_name   = "alloy"
+  }
+
+  // ---- Kubelet + cAdvisor (this node only) ------------------------------------
+  discovery.relabel "kubelet" {
+    targets = discovery.kubernetes.node.targets
+
+    rule {
+      source_labels = ["__meta_kubernetes_node_name"]
+      target_label  = "node"
+    }
+  }
+
+  discovery.relabel "cadvisor" {
+    targets = discovery.kubernetes.node.targets
+
+    rule {
+      target_label = "__metrics_path__"
+      replacement  = "/metrics/cadvisor"
+    }
+
+    rule {
+      source_labels = ["__meta_kubernetes_node_name"]
+      target_label  = "node"
+    }
+  }
+
+  prometheus.scrape "kubelet" {
+    targets           = discovery.relabel.kubelet.output
+    forward_to        = [prometheus.remote_write.default.receiver]
+    job_name          = "kubelet"
+    scheme            = "https"
+    bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+    scrape_interval   = "60s"
+
+    // RKE2 kubelet serving certs are not always signed by the SA CA; tighten
+    // this if you have a CA bundle that validates the kubelet cert.
+    tls_config {
+      insecure_skip_verify = true
+    }
+  }
+
+  prometheus.scrape "cadvisor" {
+    targets           = discovery.relabel.cadvisor.output
+    forward_to        = [prometheus.remote_write.default.receiver]
+    job_name          = "cadvisor"
+    scheme            = "https"
+    bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+    scrape_interval   = "60s"
+
+    tls_config {
+      insecure_skip_verify = true
+    }
+  }
+
+  // ---- Annotated pods on this node --------------------------------------------
+  // Opt in with:  prometheus.io/scrape: "true"
+  // Optional:     prometheus.io/path: "/metrics"   prometheus.io/port: "8080"
+  discovery.relabel "annotated_pods" {
+    targets = discovery.kubernetes.pods.targets
+
+    rule {
+      source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_scrape"]
+      regex         = "true"
+      action        = "keep"
+    }
+
+    rule {
+      source_labels = ["__meta_kubernetes_pod_phase"]
+      regex         = "Pending|Succeeded|Failed"
+      action        = "drop"
+    }
+
+    rule {
+      source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_path"]
+      regex         = "(.+)"
+      target_label  = "__metrics_path__"
+    }
+
+    rule {
+      source_labels = ["__address__", "__meta_kubernetes_pod_annotation_prometheus_io_port"]
+      regex         = "([^:]+)(?::\\d+)?;(\\d+)"
+      replacement   = "$1:$2"
+      target_label  = "__address__"
+    }
+
+    rule {
+      source_labels = ["__meta_kubernetes_namespace"]
+      target_label  = "namespace"
+    }
+
+    rule {
+      source_labels = ["__meta_kubernetes_pod_name"]
+      target_label  = "pod"
+    }
+
+    rule {
+      source_labels = ["__meta_kubernetes_pod_container_name"]
+      target_label  = "container"
+    }
+
+    rule {
+      source_labels = ["__meta_kubernetes_pod_node_name"]
+      target_label  = "node"
+    }
+
+    rule {
+      source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name", "__meta_kubernetes_pod_label_app"]
+      regex         = "([^;]+);?.*"
+      target_label  = "app"
+    }
+  }
+
+  prometheus.scrape "annotated_pods" {
+    targets         = discovery.relabel.annotated_pods.output
+    forward_to      = [prometheus.remote_write.default.receiver]
+    job_name        = "kubernetes-pods"
+    scrape_interval = "30s"
+  }
+
+  // =============================================================================
+  // LOGS (tail container logs from /var/log/pods on this node)
+  // =============================================================================
+  discovery.relabel "pod_logs" {
+    targets = discovery.kubernetes.pods.targets
+
+    rule {
+      source_labels = ["__meta_kubernetes_pod_phase"]
+      regex         = "Pending|Succeeded|Failed"
+      action        = "drop"
+    }
+
+    rule {
+      source_labels = ["__meta_kubernetes_namespace"]
+      target_label  = "namespace"
+    }
+
+    rule {
+      source_labels = ["__meta_kubernetes_pod_name"]
+      target_label  = "pod"
+    }
+
+    rule {
+      source_labels = ["__meta_kubernetes_pod_container_name"]
+      target_label  = "container"
+    }
+
+    rule {
+      source_labels = ["__meta_kubernetes_pod_node_name"]
+      target_label  = "node"
+    }
+
+    rule {
+      source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name", "__meta_kubernetes_pod_label_app"]
+      regex         = "([^;]+);?.*"
+      target_label  = "app"
+    }
+
+    rule {
+      source_labels = ["__meta_kubernetes_namespace", "__meta_kubernetes_pod_container_name"]
+      separator     = "/"
+      target_label  = "job"
+    }
+
+    // /var/log/pods/<namespace>_<pod>_<uid>/<container>/<n>.log
+    rule {
+      source_labels = ["__meta_kubernetes_pod_uid", "__meta_kubernetes_pod_container_name"]
+      separator     = "/"
+      replacement   = "/var/log/pods/*$1/*.log"
+      target_label  = "__path__"
+    }
+  }
+
+  local.file_match "pod_logs" {
+    path_targets = discovery.relabel.pod_logs.output
+  }
+
+  loki.source.file "pod_logs" {
+    targets    = local.file_match.pod_logs.targets
+    forward_to = [loki.process.pod_logs.receiver]
+  }
+
+  loki.process "pod_logs" {
+    // RKE2 uses containerd, so container logs are in CRI format.
+    stage.cri {}
+
+    // Keep label cardinality low; these are only used for path resolution.
+    stage.label_drop {
+      values = ["filename"]
+    }
+
+    forward_to = [loki.write.default.receiver]
+  }

@@ -1,0 +1,42 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: cert-manager-appset
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+  - clusters:
+      selector:
+        matchLabels:
+          environment: dev
+  # - list:
+  #     elements:
+  #     - cluster: ycd-rke2
+  #       url: http://ycd-rke2.ycdisp.net:6443
+  template:
+    metadata:
+      name: '{{.name}}-cert-manager'
+    spec:
+      project: default
+      sources:
+      - repoURL: https://github.com/eingram-homelab/argocd-core-apps.git
+        targetRevision: main
+        path: cert-manager/base
+        helm:
+          releaseName: cert-manager
+          valueFiles:
+          - ../values/{{.metadata.labels.environment}}/values.yaml
+      - repoURL: https://github.com/eingram-homelab/argocd-core-apps.git
+        targetRevision: main
+        path: cert-manager/manifests/{{.metadata.labels.environment}}/
+      destination:
+        server: '{{.server}}'
+        namespace: cert-manager
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: false
+        syncOptions:
+        - CreateNamespace=true
